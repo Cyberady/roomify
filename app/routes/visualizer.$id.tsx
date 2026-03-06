@@ -1,15 +1,15 @@
-import { useNavigate, useOutletContext, useParams} from "react-router";
-import {useEffect, useRef, useState} from "react";
-import {generate3DView} from "../../lib/ai.action";
-import {Box, Download, RefreshCcw, Share2, X} from "lucide-react";
+import { useNavigate, useOutletContext, useParams } from "react-router";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { generate3DView } from "../../lib/ai.action";
+import { Box, Download, RefreshCcw, Share2, X } from "lucide-react";
 import Button from "../../components/ui/Button";
-import {createProject, getProjectById} from "../../lib/puter.action";
-import {ReactCompareSlider, ReactCompareSliderImage} from "react-compare-slider";
+import { createProject, getProjectById } from "../../lib/puter.action";
+import { ReactCompareSlider, ReactCompareSliderImage } from "react-compare-slider";
 
 const VisualizerId = () => {
     const { id } = useParams();
     const navigate = useNavigate();
-    const { userId } = useOutletContext<AuthContext>()
+    const { userId } = useOutletContext<AuthContext>();
 
     const hasInitialGenerated = useRef(false);
 
@@ -20,50 +20,52 @@ const VisualizerId = () => {
     const [currentImage, setCurrentImage] = useState<string | null>(null);
 
     const handleBack = () => navigate('/');
+
     const handleExport = () => {
         if (!currentImage) return;
-
         const link = document.createElement('a');
         link.href = currentImage;
         link.download = `roomify-${id || 'design'}.png`;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
-    }
+    };
 
-    const runGeneration = async (item: DesignItem) => {
-        if(!id || !item.sourceImage) return;
+    // ✅ Fix 1: wrap in useCallback so it's stable across renders
+    const runGeneration = useCallback(async (item: DesignItem) => {
+        if (!id || !item.sourceImage) return;
 
         try {
             setIsProcessing(true);
             const result = await generate3DView({ sourceImage: item.sourceImage });
 
-            if(result.renderedImage) {
+            if (result.renderedImage) {
                 setCurrentImage(result.renderedImage);
 
-                const updatedItem = {
+                const updatedItem: DesignItem = {
                     ...item,
                     renderedImage: result.renderedImage,
                     renderedPath: result.renderedPath,
                     timestamp: Date.now(),
                     ownerId: item.ownerId ?? userId ?? null,
                     isPublic: item.isPublic ?? false,
-                }
+                };
 
-                const saved = await createProject({ item: updatedItem, visibility: "private" })
+                const saved = await createProject({ item: updatedItem, visibility: "private" });
 
-                if(saved) {
+                if (saved) {
                     setProject(saved);
                     setCurrentImage(saved.renderedImage || result.renderedImage);
                 }
             }
         } catch (error) {
-            console.error('Generation failed: ', error)
+            console.error('Generation failed:', error);
         } finally {
             setIsProcessing(false);
         }
-    }
+    }, [id, userId]); // ✅ Fix 2: id and userId are proper dependencies
 
+    // Load project whenever `id` changes
     useEffect(() => {
         let isMounted = true;
 
@@ -74,6 +76,7 @@ const VisualizerId = () => {
             }
 
             setIsProjectLoading(true);
+            hasInitialGenerated.current = false; // reset guard on new id
 
             const fetchedProject = await getProjectById({ id });
 
@@ -82,7 +85,6 @@ const VisualizerId = () => {
             setProject(fetchedProject);
             setCurrentImage(fetchedProject?.renderedImage || null);
             setIsProjectLoading(false);
-            hasInitialGenerated.current = false;
         };
 
         loadProject();
@@ -92,30 +94,29 @@ const VisualizerId = () => {
         };
     }, [id]);
 
+    // Trigger generation once project is loaded
     useEffect(() => {
         if (
             isProjectLoading ||
             hasInitialGenerated.current ||
             !project?.sourceImage
-        )
-            return;
+        ) return;
+
+        hasInitialGenerated.current = true; // ✅ Fix 3: set BEFORE async call to prevent double-trigger
 
         if (project.renderedImage) {
             setCurrentImage(project.renderedImage);
-            hasInitialGenerated.current = true;
             return;
         }
 
-        hasInitialGenerated.current = true;
         void runGeneration(project);
-    }, [project, isProjectLoading]);
+    }, [project, isProjectLoading, runGeneration]); // ✅ Fix 4: runGeneration now in deps
 
     return (
         <div className="visualizer">
             <nav className="topbar">
                 <div className="brand">
                     <Box className="logo" />
-
                     <span className="name">Roomify</span>
                 </div>
                 <Button variant="ghost" size="sm" onClick={handleBack} className="exit">
@@ -148,13 +149,17 @@ const VisualizerId = () => {
                         </div>
                     </div>
 
-                    <div className={`render-area ${isProcessing ? 'is-processing': ''}`}>
+                    <div className={`render-area ${isProcessing ? 'is-processing' : ''}`}>
                         {currentImage ? (
                             <img src={currentImage} alt="AI Render" className="render-img" />
                         ) : (
                             <div className="render-placeholder">
                                 {project?.sourceImage && (
-                                    <img src={project?.sourceImage} alt="Original" className="render-fallback" />
+                                    <img
+                                        src={project.sourceImage}
+                                        alt="Original"
+                                        className="render-fallback"
+                                    />
                                 )}
                             </div>
                         )}
@@ -169,7 +174,6 @@ const VisualizerId = () => {
                             </div>
                         )}
                     </div>
-
                 </div>
 
                 <div className="panel compare">
@@ -187,16 +191,28 @@ const VisualizerId = () => {
                                 defaultValue={50}
                                 style={{ width: '100%', height: 'auto' }}
                                 itemOne={
-                                    <ReactCompareSliderImage src={project?.sourceImage} alt="before" className="compare-img" />
+                                    <ReactCompareSliderImage
+                                        src={project.sourceImage}
+                                        alt="before"
+                                        className="compare-img"
+                                    />
                                 }
                                 itemTwo={
-                                    <ReactCompareSliderImage src={currentImage || project?.renderedImage} alt="after" className="compare-img" />
+                                    <ReactCompareSliderImage
+                                        src={currentImage}  // ✅ Fix 5: simplified, currentImage is already synced
+                                        alt="after"
+                                        className="compare-img"
+                                    />
                                 }
                             />
                         ) : (
                             <div className="compare-fallback">
                                 {project?.sourceImage && (
-                                    <img src={project.sourceImage} alt="Before" className="compare-img" />
+                                    <img
+                                        src={project.sourceImage}
+                                        alt="Before"
+                                        className="compare-img"
+                                    />
                                 )}
                             </div>
                         )}
@@ -204,6 +220,7 @@ const VisualizerId = () => {
                 </div>
             </section>
         </div>
-    )
-}
-export default VisualizerId
+    );
+};
+
+export default VisualizerId;

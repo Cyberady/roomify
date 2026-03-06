@@ -5,4 +5,10 @@ import tsconfigPaths from "vite-tsconfig-paths";
 
 export default defineConfig({
   plugins: [tailwindcss(), reactRouter(), tsconfigPaths()],
+  resolve: {
+    dedupe: ['react', 'react-dom', 'react-router'], // ← fixes duplicate React instance
+  },
+  server: {
+    historyApiFallback: true, // ← fixes 404 on refresh
+  },
 });
